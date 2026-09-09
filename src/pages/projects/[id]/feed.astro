@@ -1,0 +1,762 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro'
+import EventCard from '@/components/EventCard.astro'
+import SearchBar from '@/components/SearchBar.astro'
+import CategoryList from '@/components/CategoryList.astro'
+import { db } from '@/db'
+import { events, categories } from '@/db/schema'
+import { eq, desc, and, sql } from 'drizzle-orm'
+
+const { id } = Astro.params
+const category = Astro.url.searchParams.get('category')
+const showFavorites = Astro.url.searchParams.get('favorites') === '1'
+const page = Math.max(1, parseInt(Astro.url.searchParams.get('page') || '1'))
+const perPageParam = Astro.url.searchParams.get('per') || '50'
+const perPage =
+  perPageParam === 'all' ? null : Math.min(parseInt(perPageParam) || 50, 100)
+
+const conditions = [eq(events.projectId, id!)]
+if (category) conditions.push(eq(events.category, category))
+if (showFavorites) conditions.push(eq(events.favorited, true))
+
+const totalCount =
+  db
+    .select({ count: sql<number>`count(*)` })
+    .from(events)
+    .where(and(...conditions))
+    .get()?.count ?? 0
+
+const offset = perPage ? (page - 1) * perPage : 0
+const totalPages = perPage ? Math.ceil(totalCount / perPage) : 1
+const currentPage = Math.min(page, Math.max(totalPages, 1))
+
+let query = db
+  .select()
+  .from(events)
+  .where(and(...conditions))
+  .orderBy(desc(events.createdAt))
+
+if (perPage) {
+  query = query
+    .limit(perPage)
+    .offset((currentPage - 1) * perPage) as typeof query
+}
+
+const recentEvents = query.all()
+
+const projectCategories = db
+  .select({
+    name: categories.name,
+    count:
+      sql<number>`(SELECT count(*) FROM events WHERE events.project_id = ${categories.projectId} AND events.category = ${categories.name})`.as(
+        'count'
+      ),
+  })
+  .from(categories)
+  .where(eq(categories.projectId, id!))
+  .all()
+
+const favCount = db
+  .select({ count: sql<number>`count(*)` })
+  .from(events)
+  .where(and(eq(events.projectId, id!), eq(events.favorited, true)))
+  .get()
+
+function buildUrl(params: Record<string, string | number | null>) {
+  const base = `/projects/${id}/feed`
+  const parts: string[] = []
+  if (category) parts.push(`category=${category}`)
+  if (showFavorites) parts.push('favorites=1')
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== null && v !== undefined) parts.push(`${k}=${v}`)
+  }
+  return parts.length ? `${base}?${parts.join('&')}` : base
+}
+
+const perPageLabel = perPage ? String(perPage) : 'all'
+const showingFrom = perPage ? (currentPage - 1) * perPage + 1 : 1
+const showingTo = perPage
+  ? Math.min(currentPage * perPage, totalCount)
+  : totalCount
+
+const htmxParams = [`project=${id}`]
+if (category) htmxParams.push(`category=${category}`)
+if (showFavorites) htmxParams.push('favorites=1')
+if (perPage) htmxParams.push(`per=${perPage}`)
+htmxParams.push(`page=${currentPage}`)
+const htmxUrl = `/partials/event-list?${htmxParams.join('&')}`
+
+type PageItem = { type: 'page'; num: number } | { type: 'ellipsis' }
+const pageItems: PageItem[] = []
+if (perPage && totalPages > 1) {
+  for (let p = 1; p <= totalPages; p++) {
+    if (
+      totalPages <= 7 ||
+      p === 1 ||
+      p === totalPages ||
+      Math.abs(p - currentPage) <= 1
+    ) {
+      pageItems.push({ type: 'page', num: p })
+    } else if (
+      pageItems.length > 0 &&
+      pageItems[pageItems.length - 1].type !== 'ellipsis'
+    ) {
+      pageItems.push({ type: 'ellipsis' })
+    }
+  }
+}
+---
+
+<DashboardLayout projectId={id!} currentPage='feed'>
+  <div
+    class='feed-page'
+    x-data={`{ view: localStorage.getItem('feedView') || 'cards', favCount: ${favCount?.count ?? 0} }`}
+    x-effect="localStorage.setItem('feedView', view)"
+    :class="'view-' + view"
+    @favorite-changed.window='favCount += $event.detail.delta'>
+    <div class='feed-header'>
+      <div class='feed-title-row'>
+        <h1>Feed</h1>
+        {totalCount > 0 && <span class='event-count'>{totalCount}</span>}
+      </div>
+      <div class='feed-actions'>
+        <div class='view-toggle'>
+          <button
+            class='view-btn'
+            :class="{ active: view === 'cards' }"
+            title='Cards view'
+            @click="view = 'cards'">
+            <svg
+              width='16'
+              height='16'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='currentColor'
+              stroke-width='2'
+              stroke-linecap='round'
+              stroke-linejoin='round'>
+              <rect x='3' y='3' width='7' height='7'></rect>
+              <rect x='14' y='3' width='7' height='7'></rect>
+              <rect x='3' y='14' width='7' height='7'></rect>
+              <rect x='14' y='14' width='7' height='7'></rect>
+            </svg>
+          </button>
+          <button
+            class='view-btn'
+            :class="{ active: view === 'list' }"
+            title='List view'
+            @click="view = 'list'">
+            <svg
+              width='16'
+              height='16'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='currentColor'
+              stroke-width='2'
+              stroke-linecap='round'
+              stroke-linejoin='round'>
+              <line x1='8' y1='6' x2='21' y2='6'></line>
+              <line x1='8' y1='12' x2='21' y2='12'></line>
+              <line x1='8' y1='18' x2='21' y2='18'></line>
+              <line x1='3' y1='6' x2='3.01' y2='6'></line>
+              <line x1='3' y1='12' x2='3.01' y2='12'></line>
+              <line x1='3' y1='18' x2='3.01' y2='18'></line>
+            </svg>
+          </button>
+        </div>
+        <button
+          class='icon-btn notify-btn'
+          id='notify-toggle'
+          title='Enable notifications'
+          onclick='window.__requestNotifyPermission && window.__requestNotifyPermission(this)'>
+          <svg
+            width='18'
+            height='18'
+            viewBox='0 0 24 24'
+            fill='none'
+            stroke='currentColor'
+            stroke-width='2'
+            stroke-linecap='round'
+            stroke-linejoin='round'>
+            <path d='M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9'></path>
+            <path d='M13.73 21a2 2 0 0 1-3.46 0'></path>
+          </svg>
+        </button>
+        <button
+          class='icon-btn'
+          title='Search'
+          onclick="const el = document.querySelector('.search-area'); const wasHidden = el.style.display === 'none'; el.style.display = wasHidden ? 'block' : 'none'; if (wasHidden) el.querySelector('input').focus()">
+          <svg
+            width='18'
+            height='18'
+            viewBox='0 0 24 24'
+            fill='none'
+            stroke='currentColor'
+            stroke-width='2'
+            stroke-linecap='round'
+            stroke-linejoin='round'>
+            <circle cx='11' cy='11' r='8'></circle>
+            <line x1='21' y1='21' x2='16.65' y2='16.65'></line>
+          </svg>
+        </button>
+        <button
+          class='icon-btn'
+          title='Refresh'
+          onclick='window.location.reload()'>
+          <svg
+            width='18'
+            height='18'
+            viewBox='0 0 24 24'
+            fill='none'
+            stroke='currentColor'
+            stroke-width='2'
+            stroke-linecap='round'
+            stroke-linejoin='round'>
+            <polyline points='23 4 23 10 17 10'></polyline>
+            <path d='M20.49 15a9 9 0 1 1-2.12-9.36L23 10'></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <CategoryList
+      categories={projectCategories}
+      projectId={id!}
+      currentPage='feed'
+      activeCategory={category ?? undefined}
+      favoritesActive={showFavorites}
+      favoritesCount={favCount?.count ?? 0}
+    />
+
+    <div class='search-area' style='display:none'>
+      <SearchBar projectId={id!} />
+    </div>
+
+    <div
+      id='event-list'
+      hx-get={htmxUrl}
+      hx-trigger='every 10s'
+      hx-swap='innerHTML'>
+      {
+        recentEvents.length === 0 ? (
+          <div class='empty-feed'>
+            <p class='empty-main'>
+              {showFavorites ? 'No favorites yet!' : 'Nothing here yet!'}
+            </p>
+            <p class='empty-sub'>
+              {showFavorites
+                ? 'Star events you want to remember.'
+                : 'Push your first event via the API or CLI.'}
+            </p>
+          </div>
+        ) : (
+          <div class='event-list'>
+            {recentEvents.map(event => (
+              <EventCard event={event} />
+            ))}
+          </div>
+        )
+      }
+    </div>
+
+    {
+      totalCount > 0 && (
+        <div class='pagination-bar'>
+          <div class='pagination-info'>
+            <span class='showing-text'>
+              {totalCount === 0
+                ? 'No events'
+                : perPage
+                  ? `${showingFrom}–${showingTo} of ${totalCount}`
+                  : `All ${totalCount} events`}
+            </span>
+            <div class='per-page-options'>
+              <span class='per-label'>Show</span>
+              <a
+                href={buildUrl({ per: 50 })}
+                class:list={['per-option', { active: perPageLabel === '50' }]}>
+                50
+              </a>
+              <a
+                href={buildUrl({ per: 100 })}
+                class:list={['per-option', { active: perPageLabel === '100' }]}>
+                100
+              </a>
+              <a
+                href={buildUrl({ per: 'all' })}
+                class:list={['per-option', { active: perPageLabel === 'all' }]}>
+                All
+              </a>
+            </div>
+          </div>
+
+          {perPage && totalPages > 1 && (
+            <nav class='page-nav'>
+              {currentPage > 1 ? (
+                <a
+                  href={buildUrl({ per: perPage, page: currentPage - 1 })}
+                  class='page-btn'>
+                  <svg
+                    width='14'
+                    height='14'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2.5'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <polyline points='15 18 9 12 15 6' />
+                  </svg>
+                </a>
+              ) : (
+                <span class='page-btn disabled'>
+                  <svg
+                    width='14'
+                    height='14'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2.5'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <polyline points='15 18 9 12 15 6' />
+                  </svg>
+                </span>
+              )}
+
+              {pageItems.map(item =>
+                item.type === 'page' ? (
+                  <a
+                    href={buildUrl({ per: perPage, page: item.num })}
+                    class:list={[
+                      'page-num',
+                      { active: item.num === currentPage },
+                    ]}>
+                    {item.num}
+                  </a>
+                ) : (
+                  <span class='page-ellipsis'>&hellip;</span>
+                )
+              )}
+
+              {currentPage < totalPages ? (
+                <a
+                  href={buildUrl({ per: perPage, page: currentPage + 1 })}
+                  class='page-btn'>
+                  <svg
+                    width='14'
+                    height='14'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2.5'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <polyline points='9 18 15 12 9 6' />
+                  </svg>
+                </a>
+              ) : (
+                <span class='page-btn disabled'>
+                  <svg
+                    width='14'
+                    height='14'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2.5'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <polyline points='9 18 15 12 9 6' />
+                  </svg>
+                </span>
+              )}
+            </nav>
+          )}
+        </div>
+      )
+    }
+  </div>
+</DashboardLayout>
+
+<style>
+  .feed-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .feed-title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .feed-header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--color-text);
+    letter-spacing: -0.03em;
+  }
+
+  .event-count {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: var(--radius-pill);
+  }
+
+  .feed-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .view-toggle {
+    display: flex;
+    align-items: center;
+    background: var(--color-bg);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    gap: 1px;
+    margin-right: 4px;
+  }
+
+  .view-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 28px;
+    border: none;
+    background: none;
+    border-radius: 4px;
+    color: var(--color-text-muted);
+    transition: all 0.12s;
+  }
+  .view-btn:hover {
+    color: var(--color-text);
+  }
+  .view-btn.active {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+
+  .icon-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover {
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+
+  .search-area {
+    margin-bottom: 12px;
+  }
+
+  .event-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Cards view */
+  .view-cards :global(.event-list) {
+    gap: 10px;
+  }
+  .view-cards :global(.event-row) {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    margin: 0;
+    padding: 16px 18px;
+    border-bottom: none;
+  }
+  .view-cards :global(.event-row:last-child) {
+    border-bottom: none;
+  }
+  .view-cards :global(.event-row:hover) {
+    border-color: rgba(67, 56, 202, 0.2);
+    box-shadow: 0 1px 4px rgba(67, 56, 202, 0.06);
+  }
+  .view-cards :global(.event-notify) {
+    border-left: 3px solid #6366f1;
+    padding-left: 15px;
+  }
+  .view-cards :global(.event-tags) {
+    display: flex;
+  }
+
+  /* List view */
+  .view-list :global(.event-row) {
+    padding: 6px 0;
+    margin: 0;
+    gap: 8px;
+    align-items: center;
+    border-radius: 0;
+    border-bottom: none;
+  }
+  .view-list :global(.event-row:hover) {
+    background: none;
+  }
+  .view-list :global(.event-time-col) {
+    display: block;
+    width: 130px;
+    min-width: 130px;
+    font-size: 12px;
+    color: var(--color-text-muted);
+    font-family:
+      'SF Mono', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    text-align: right;
+  }
+  .view-list :global(.event-icon) {
+    width: auto;
+    height: auto;
+    font-size: 14px;
+    border-radius: 0;
+    background: none;
+  }
+  .view-list :global(.event-title) {
+    font-size: 13px;
+    text-transform: none;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .view-list :global(.event-description) {
+    display: none;
+  }
+  .view-list :global(.event-meta) {
+    margin-top: 0;
+    margin-left: auto;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .view-list :global(.event-time) {
+    display: none;
+  }
+  .view-list :global(.event-dot) {
+    display: none;
+  }
+  .view-list :global(.event-body) {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .view-list :global(.event-notify) {
+    border-left: none;
+    padding-left: 0;
+  }
+  .view-list :global(.notify-indicator svg),
+  .view-list :global(.fav-indicator svg) {
+    width: 10px;
+    height: 10px;
+  }
+  .view-list :global(.action-btn) {
+    width: 24px;
+    height: 24px;
+  }
+  .view-list :global(.action-btn svg) {
+    width: 13px;
+    height: 13px;
+  }
+
+  .empty-feed {
+    text-align: center;
+    padding: 80px 20px;
+    background: var(--color-surface);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+  }
+  .empty-main {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--color-text);
+    margin-bottom: 6px;
+  }
+  .empty-sub {
+    color: var(--color-text-secondary);
+    font-size: 14px;
+  }
+
+  .pagination-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 0;
+    margin-top: 8px;
+    border-top: 1px solid var(--color-border);
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .pagination-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .showing-text {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .per-page-options {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .per-label {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    margin-right: 4px;
+  }
+
+  .per-option {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    text-decoration: none;
+    transition: all 0.12s;
+  }
+  .per-option:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .per-option.active {
+    background: var(--color-primary);
+    color: #fff;
+  }
+
+  .page-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .page-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: all 0.12s;
+  }
+  .page-btn:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .page-btn.disabled {
+    color: var(--color-border);
+    pointer-events: none;
+  }
+
+  .page-num {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 32px;
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: all 0.12s;
+    font-variant-numeric: tabular-nums;
+  }
+  .page-num:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .page-num.active {
+    background: var(--color-primary);
+    color: #fff;
+  }
+
+  .page-ellipsis {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 32px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+  }
+
+  .notify-btn.notify-active {
+    color: #6366f1;
+  }
+  .notify-btn.notify-active:hover {
+    background: #eef2ff;
+    color: #6366f1;
+  }
+
+  @media (max-width: 600px) {
+    .pagination-bar {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+    .pagination-info {
+      justify-content: space-between;
+    }
+    .page-nav {
+      justify-content: center;
+    }
+  }
+</style>
+
+<script is:inline>
+  ;(function () {
+    if (!('Notification' in window)) return
+    var btn = document.getElementById('notify-toggle')
+    if (Notification.permission === 'granted') {
+      btn.classList.add('notify-active')
+      btn.title = 'Notifications enabled'
+    } else if (Notification.permission === 'denied') {
+      btn.title = 'Notifications blocked'
+      btn.style.opacity = '0.4'
+    }
+    window.__requestNotifyPermission = function (el) {
+      if (Notification.permission === 'denied') {
+        alert(
+          'Notifications are blocked. Enable them in your browser settings.'
+        )
+        return
+      }
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().then(function (p) {
+          if (p === 'granted') {
+            el.classList.add('notify-active')
+            el.title = 'Notifications enabled'
+            new Notification('Notifications enabled', {
+              body: 'You will be notified when events with the notify flag arrive.',
+            })
+          }
+        })
+      }
+    }
+  })()
+</script>

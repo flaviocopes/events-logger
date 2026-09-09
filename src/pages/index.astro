@@ -1,0 +1,732 @@
+---
+import Layout from '@/layouts/Layout.astro'
+import { db } from '@/db'
+import { projects, events, categories, insights } from '@/db/schema'
+import { eq, sql, desc, inArray } from 'drizzle-orm'
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import { getGlobalApiKey, generateProjectId } from '@/lib/auth'
+
+const globalApiKey = getGlobalApiKey()
+let demoMessage = ''
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData()
+  const action = formData.get('action')
+
+  if (action === 'create') {
+    const name = formData.get('name')?.toString().trim()
+    if (name) {
+      const id = generateProjectId()
+      db.insert(projects)
+        .values({ id, name, createdAt: new Date() })
+        .run()
+      return Astro.redirect(`/projects/${id}/feed`)
+    }
+  }
+
+  if (action === 'load-demo') {
+    const file = formData.get('file')?.toString()
+    const allowed = [
+      'ecommerce.json',
+      'saas.json',
+      'devops.json',
+      'content.json',
+      'all-scenarios.json',
+    ]
+    if (file && allowed.includes(file)) {
+      try {
+        const filePath = join(process.cwd(), 'demos', file)
+        const data = JSON.parse(readFileSync(filePath, 'utf-8'))
+        const projectIds = data.projects.map((p: any) => p.id)
+
+        db.delete(events).where(inArray(events.projectId, projectIds)).run()
+        db.delete(insights).where(inArray(insights.projectId, projectIds)).run()
+        db.delete(categories)
+          .where(inArray(categories.projectId, projectIds))
+          .run()
+        db.delete(projects).where(inArray(projects.id, projectIds)).run()
+
+        for (const p of data.projects) {
+          db.insert(projects)
+            .values({
+              id: p.id,
+              name: p.name,
+              createdAt: new Date(p.created_at * 1000),
+            })
+            .run()
+        }
+        for (const c of data.categories) {
+          db.insert(categories)
+            .values({
+              projectId: c.project_id,
+              name: c.name,
+              createdAt: new Date(c.created_at * 1000),
+            })
+            .run()
+        }
+        for (const e of data.events) {
+          db.insert(events)
+            .values({
+              projectId: e.project_id,
+              category: e.category,
+              title: e.title,
+              description: e.description || null,
+              icon: e.icon || null,
+              tags: e.tags || null,
+              url: e.url || null,
+              userId: e.user_id || null,
+              notify: !!e.notify,
+              createdAt: new Date(e.created_at * 1000),
+            })
+            .run()
+        }
+        for (const i of data.insights || []) {
+          db.insert(insights)
+            .values({
+              projectId: i.project_id,
+              title: i.title,
+              value: i.value,
+              icon: i.icon || null,
+              updatedAt: new Date(i.updated_at * 1000),
+            })
+            .run()
+        }
+        demoMessage = `Loaded ${data.projects.length} project${data.projects.length !== 1 ? 's' : ''}, ${data.events.length} events, ${(data.insights || []).length} insights`
+      } catch (err) {
+        demoMessage = 'Failed to load demo data'
+      }
+    }
+  }
+}
+
+const allProjects = db
+  .select()
+  .from(projects)
+  .orderBy(desc(projects.createdAt))
+  .all()
+
+const eventCounts: Record<string, number> = {}
+for (const p of allProjects) {
+  const result = db
+    .select({ count: sql<number>`count(*)` })
+    .from(events)
+    .where(eq(events.projectId, p.id))
+    .get()
+  eventCounts[p.id] = result?.count ?? 0
+}
+
+const showNew = Astro.url.searchParams.get('new') === '1'
+
+const avatarColors = [
+  '#e84855',
+  '#f9c22e',
+  '#3185fc',
+  '#46c46f',
+  '#9b5de5',
+  '#f15bb5',
+  '#00bbf9',
+  '#ff6b35',
+  '#2ec4b6',
+  '#ff9f1c',
+  '#7678ed',
+  '#e07a5f',
+]
+
+function getColor(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return avatarColors[Math.abs(hash) % avatarColors.length]
+}
+---
+
+<Layout title='Home'>
+  <div class='home'>
+    <header class='home-header'>
+      <div class='logo'>
+        <svg
+          width='28'
+          height='28'
+          viewBox='0 0 24 24'
+          fill='none'
+          stroke='currentColor'
+          stroke-width='2'
+          stroke-linecap='round'
+          stroke-linejoin='round'>
+          <path d='M4 11a9 9 0 0 1 9 9'></path>
+          <path d='M4 4a16 16 0 0 1 16 16'></path>
+          <circle cx='5' cy='19' r='1'></circle>
+        </svg>
+        <h1>Events Dashboard</h1>
+      </div>
+      <p class='subtitle'>Your projects, your events, all in one place.</p>
+    </header>
+
+    <div class='api-key-section' x-data='{ visible: false }'>
+      <div class='api-key-label'>
+        <svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
+          <path d='M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4'></path>
+        </svg>
+        <span>API Key</span>
+      </div>
+      <div class='api-key-box'>
+        <code x-show='visible'>{globalApiKey}</code>
+        <code x-show='!visible'>ev_••••••••-••••-••••-••••-••••••••••••</code>
+        <button
+          @click='visible = !visible'
+          class='btn-reveal'
+          x-text="visible ? 'Hide' : 'Reveal'"></button>
+      </div>
+    </div>
+
+    {
+      showNew && (
+        <form method='POST' class='new-project-form'>
+          <input type='hidden' name='action' value='create' />
+          <h3>Create a new project</h3>
+          <p class='form-hint'>Give it a name and you're off to the races.</p>
+          <div class='form-row'>
+            <input
+              type='text'
+              name='name'
+              placeholder='e.g. my-store'
+              required
+              autofocus
+            />
+            <button type='submit' class='btn-create'>
+              Create
+            </button>
+          </div>
+        </form>
+      )
+    }
+
+    {
+      allProjects.length === 0 && !showNew ? (
+        <div class='empty-state'>
+          <div class='empty-icon'>
+            <svg
+              width='52'
+              height='52'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='var(--color-text-muted)'
+              stroke-width='1.2'
+              stroke-linecap='round'
+              stroke-linejoin='round'>
+              <path d='M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z' />
+              <polyline points='13 2 13 9 20 9' />
+            </svg>
+          </div>
+          <p class='empty-text'>No projects yet!</p>
+          <p class='empty-sub'>
+            Create your first project to start tracking events.
+          </p>
+          <a href='/?new=1' class='btn-primary'>
+            Create your first project
+          </a>
+        </div>
+      ) : (
+        <div class='project-grid'>
+          {allProjects.map(p => {
+            const color = getColor(p.name)
+            return (
+              <a href={`/projects/${p.id}/feed`} class='project-card'>
+                <div class='card-banner' style={`background: ${color}`}>
+                  <span class='card-initials'>
+                    {p.name.slice(0, 2).toUpperCase()}
+                  </span>
+                </div>
+                <div class='card-body'>
+                  <span class='card-name'>{p.name}</span>
+                  <span class='card-count'>
+                    {eventCounts[p.id]}{' '}
+                    {eventCounts[p.id] === 1 ? 'event' : 'events'}
+                  </span>
+                </div>
+              </a>
+            )
+          })}
+          <a href='/?new=1' class='project-card add-card'>
+            <div class='add-icon'>
+              <svg
+                width='24'
+                height='24'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                stroke-width='2'
+                stroke-linecap='round'
+                stroke-linejoin='round'>
+                <line x1='12' y1='5' x2='12' y2='19' />
+                <line x1='5' y1='12' x2='19' y2='12' />
+              </svg>
+            </div>
+            <span class='add-label'>New project</span>
+          </a>
+        </div>
+      )
+    }
+    <div
+      class='sample-section'
+      x-data={`{ open: ${demoMessage ? 'true' : 'false'} }`}>
+      <button class='sample-toggle' @click='open = !open'>
+        <span class='sample-toggle-text'>Load sample data</span>
+        <svg
+          width='14'
+          height='14'
+          viewBox='0 0 24 24'
+          fill='none'
+          stroke='currentColor'
+          stroke-width='2.5'
+          stroke-linecap='round'
+          stroke-linejoin='round'
+          :class="{ 'chevron-open': open }">
+          <polyline points='6 9 12 15 18 9'></polyline>
+        </svg>
+      </button>
+      <div x-show='open' x-cloak x-transition.opacity>
+        {
+          demoMessage && (
+            <div
+              class:list={[
+                'demo-toast',
+                { 'demo-err': demoMessage.startsWith('Failed') },
+              ]}>
+              {demoMessage}
+            </div>
+          )
+        }
+        <div class='demo-grid'>
+          <form method='POST'>
+            <input type='hidden' name='action' value='load-demo' />
+            <input type='hidden' name='file' value='ecommerce.json' />
+            <button type='submit' class='demo-btn'>
+              <span class='demo-icon'>🛒</span>
+              <span class='demo-info'>
+                <strong>QuickShop</strong>
+                <span>E-commerce</span>
+              </span>
+            </button>
+          </form>
+          <form method='POST'>
+            <input type='hidden' name='action' value='load-demo' />
+            <input type='hidden' name='file' value='saas.json' />
+            <button type='submit' class='demo-btn'>
+              <span class='demo-icon'>🚀</span>
+              <span class='demo-info'>
+                <strong>LaunchPad SaaS</strong>
+                <span>Subscriptions & usage</span>
+              </span>
+            </button>
+          </form>
+          <form method='POST'>
+            <input type='hidden' name='action' value='load-demo' />
+            <input type='hidden' name='file' value='devops.json' />
+            <button type='submit' class='demo-btn'>
+              <span class='demo-icon'>⚙️</span>
+              <span class='demo-info'>
+                <strong>DeployBot</strong>
+                <span>CI/CD pipeline</span>
+              </span>
+            </button>
+          </form>
+          <form method='POST'>
+            <input type='hidden' name='action' value='load-demo' />
+            <input type='hidden' name='file' value='content.json' />
+            <button type='submit' class='demo-btn'>
+              <span class='demo-icon'>📝</span>
+              <span class='demo-info'>
+                <strong>BlogWave</strong>
+                <span>Content platform</span>
+              </span>
+            </button>
+          </form>
+          <form method='POST'>
+            <input type='hidden' name='action' value='load-demo' />
+            <input type='hidden' name='file' value='all-scenarios.json' />
+            <button type='submit' class='demo-btn demo-btn-all'>
+              <span class='demo-icon'>📦</span>
+              <span class='demo-info'>
+                <strong>All Scenarios</strong>
+                <span>All 4 projects at once</span>
+              </span>
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .home {
+    min-height: 100vh;
+    padding: 48px 24px 80px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  .home-header {
+    margin-bottom: 36px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--color-primary);
+    margin-bottom: 6px;
+  }
+
+  h1 {
+    font-size: 30px;
+    font-weight: 900;
+    color: var(--color-text);
+    letter-spacing: -0.03em;
+  }
+
+  .subtitle {
+    color: var(--color-text-secondary);
+    font-size: 16px;
+    margin-top: 2px;
+  }
+
+  .api-key-section {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+  .api-key-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .api-key-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--color-bg);
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+  }
+  .api-key-box code {
+    flex: 1;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--color-text-secondary);
+    word-break: break-all;
+  }
+  .btn-reveal {
+    padding: 5px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-primary);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-reveal:hover {
+    background: var(--color-primary-light);
+    border-color: var(--color-primary);
+  }
+
+  .new-project-form {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: 28px;
+    margin-bottom: 28px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  }
+  .new-project-form h3 {
+    font-size: 18px;
+    font-weight: 800;
+    margin-bottom: 4px;
+    color: var(--color-text);
+  }
+  .form-hint {
+    font-size: 14px;
+    color: var(--color-text-secondary);
+    margin-bottom: 18px;
+  }
+
+  .form-row {
+    display: flex;
+    gap: 10px;
+  }
+  .form-row input {
+    flex: 1;
+    padding: 11px 16px;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    outline: none;
+    background: var(--color-surface);
+    transition: border-color 0.15s;
+  }
+  .form-row input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(67, 56, 202, 0.1);
+  }
+  .form-row input::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  .btn-create {
+    padding: 11px 24px;
+    background: var(--color-primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-create:hover {
+    background: var(--color-primary-hover);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 72px 28px;
+    background: var(--color-surface);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+  }
+  .empty-icon {
+    margin-bottom: 20px;
+  }
+  .empty-text {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--color-text);
+    margin-bottom: 6px;
+  }
+  .empty-sub {
+    color: var(--color-text-secondary);
+    font-size: 15px;
+    margin-bottom: 28px;
+  }
+  .btn-primary {
+    display: inline-block;
+    padding: 12px 28px;
+    background: var(--color-primary);
+    color: #fff;
+    border-radius: var(--radius-pill);
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .btn-primary:hover {
+    background: var(--color-primary-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(67, 56, 202, 0.25);
+  }
+
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+  }
+
+  .project-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .project-card:hover {
+    border-color: var(--color-border-hover);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.07);
+    transform: translateY(-3px);
+  }
+
+  .card-banner {
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .card-initials {
+    font-size: 26px;
+    font-weight: 900;
+    color: rgba(255, 255, 255, 0.9);
+    letter-spacing: 0.02em;
+  }
+
+  .card-body {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .card-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .card-count {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+  }
+
+  .add-card {
+    border-style: dashed;
+    border-width: 2px;
+    border-color: var(--color-border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 130px;
+    gap: 8px;
+  }
+  .add-card:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+  .add-card:hover .add-icon {
+    color: var(--color-primary);
+  }
+  .add-card:hover .add-label {
+    color: var(--color-primary);
+  }
+
+  .add-icon {
+    color: var(--color-text-muted);
+    transition: color 0.15s;
+  }
+
+  .add-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    transition: color 0.15s;
+  }
+
+  .sample-section {
+    margin-top: 36px;
+  }
+
+  [x-cloak] {
+    display: none !important;
+  }
+
+  .sample-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0;
+    transition: color 0.12s;
+  }
+  .sample-toggle:hover {
+    color: var(--color-text-secondary);
+  }
+  .sample-toggle svg {
+    transition: transform 0.2s;
+  }
+  .sample-toggle :global(.chevron-open) {
+    transform: rotate(180deg);
+  }
+
+  .demo-toast {
+    background: #ecfdf5;
+    color: #065f46;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    margin-top: 12px;
+  }
+  .demo-toast.demo-err {
+    background: #fef2f2;
+    color: #991b1b;
+  }
+
+  .demo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .demo-grid form {
+    display: contents;
+  }
+
+  .demo-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    text-align: left;
+    transition: all 0.15s;
+  }
+  .demo-btn:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+
+  .demo-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .demo-info {
+    display: flex;
+    flex-direction: column;
+  }
+  .demo-info strong {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+  .demo-info span {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+
+  .demo-btn-all {
+    border-style: dashed;
+  }
+
+  @media (max-width: 520px) {
+    .project-grid {
+      grid-template-columns: 1fr;
+    }
+    .demo-grid {
+      grid-template-columns: 1fr;
+    }
+    .home {
+      padding: 32px 16px 60px;
+    }
+  }
+</style>

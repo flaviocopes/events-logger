@@ -1,0 +1,176 @@
+---
+interface Props {
+  categories: { name: string; count: number }[]
+  projectId: string
+  currentPage: string
+  activeCategory?: string
+  favoritesActive?: boolean
+  favoritesCount?: number
+}
+
+const {
+  categories,
+  projectId,
+  currentPage,
+  activeCategory,
+  favoritesActive = false,
+  favoritesCount = 0,
+} = Astro.props
+
+const categoryColors = [
+  '#4338ca',
+  '#059669',
+  '#e84855',
+  '#f59e0b',
+  '#7c3aed',
+  '#0891b2',
+  '#ea580c',
+  '#d946ef',
+  '#2563eb',
+  '#16a34a',
+]
+
+function getCategoryColor(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return categoryColors[Math.abs(hash) % categoryColors.length]
+}
+
+function buildHref(params: { category?: string; favorites?: boolean }) {
+  const base = `/projects/${projectId}/${currentPage}`
+  const parts: string[] = []
+  if (params.category) parts.push(`category=${params.category}`)
+  if (params.favorites) parts.push('favorites=1')
+  return parts.length ? `${base}?${parts.join('&')}` : base
+}
+---
+
+{
+  (categories.length > 0 || favoritesCount > 0) && (
+    <div class='category-pills'>
+      <a
+        href={buildHref({ favorites: favoritesActive })}
+        class:list={['pill', { active: !activeCategory }]}>
+        All
+      </a>
+      <a
+        href={buildHref({
+          category: activeCategory,
+          favorites: !favoritesActive,
+        })}
+        class:list={['pill', 'pill-fav', { active: favoritesActive }]}
+        x-show='favCount > 0'
+        x-cloak>
+        <svg
+          width='12'
+          height='12'
+          viewBox='0 0 24 24'
+          fill={favoritesActive ? 'currentColor' : 'none'}
+          stroke='currentColor'
+          stroke-width='2.5'
+          stroke-linecap='round'
+          stroke-linejoin='round'>
+          <polygon points='12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2' />
+        </svg>
+        Favorites
+        <span class='pill-count' x-text='favCount'>{favoritesCount}</span>
+      </a>
+      {categories.map(cat => (
+        <a
+          href={buildHref({
+            category: activeCategory === cat.name ? undefined : cat.name,
+            favorites: favoritesActive,
+          })}
+          class:list={['pill', { active: activeCategory === cat.name }]}>
+          <span
+            class='pill-dot'
+            style={`background: ${getCategoryColor(cat.name)}`}
+          />
+          {cat.name}
+          <span class='pill-count'>{cat.count}</span>
+        </a>
+      ))}
+    </div>
+  )
+}
+
+<style>
+  [x-cloak] {
+    display: none !important;
+  }
+  .category-pills {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+
+  .pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    text-decoration: none;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .pill:hover {
+    border-color: var(--color-border-hover);
+    color: var(--color-text);
+  }
+  .pill.active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+    font-weight: 600;
+  }
+  .pill.active .pill-dot {
+    background: rgba(255, 255, 255, 0.6) !important;
+  }
+  .pill.active .pill-count {
+    background: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .pill-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .pill-count {
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--color-bg);
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    color: var(--color-text-muted);
+  }
+
+  .pill-fav svg {
+    flex-shrink: 0;
+  }
+  .pill-fav.active {
+    background: #fef3c7;
+    color: #b45309;
+    border-color: #fde68a;
+  }
+  .pill-fav.active .pill-count {
+    background: rgba(180, 83, 9, 0.12);
+    color: #92400e;
+  }
+  .pill-fav:hover:not(.active) {
+    border-color: #fde68a;
+    color: #b45309;
+  }
+</style>

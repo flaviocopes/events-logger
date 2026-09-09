@@ -1,0 +1,507 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro'
+import { db } from '@/db'
+import { events, categories } from '@/db/schema'
+import { eq, and, gte, sql } from 'drizzle-orm'
+
+const { id } = Astro.params
+const days = 30
+const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+
+const projectCategories = db
+  .select({ name: categories.name })
+  .from(categories)
+  .where(eq(categories.projectId, id!))
+  .all()
+
+const chartData = db
+  .select({
+    category: events.category,
+    day: sql<string>`date(${events.createdAt}, 'unixepoch')`.as('day'),
+    count: sql<number>`count(*)`.as('count'),
+  })
+  .from(events)
+  .where(and(eq(events.projectId, id!), gte(events.createdAt, since)))
+  .groupBy(events.category, sql`date(${events.createdAt}, 'unixepoch')`)
+
+  .orderBy(sql`day`)
+  .all()
+
+const byCategory: Record<string, { day: string; count: number }[]> = {}
+for (const row of chartData) {
+  if (!byCategory[row.category]) byCategory[row.category] = []
+  byCategory[row.category].push({ day: row.day, count: row.count })
+}
+
+const categoryTotals: Record<string, number> = {}
+for (const [cat, data] of Object.entries(byCategory)) {
+  categoryTotals[cat] = data.reduce((sum, d) => sum + d.count, 0)
+}
+
+const totalEvents = Object.values(categoryTotals).reduce((a, b) => a + b, 0)
+
+const dailyTotals: Record<string, number> = {}
+for (const row of chartData) {
+  dailyTotals[row.day] = (dailyTotals[row.day] || 0) + row.count
+}
+const sortedDays = Object.entries(dailyTotals)
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([day, count]) => ({ day, count }))
+
+const hasData = Object.keys(byCategory).length > 0
+---
+
+<DashboardLayout projectId={id!} currentPage='charts'>
+  <div class='charts-header'>
+    <h1>Charts</h1>
+    <span class='charts-badge'>Last {days} days</span>
+  </div>
+
+  {
+    !hasData ? (
+      <div class='empty-charts'>
+        <p class='empty-main'>No data yet!</p>
+        <p class='empty-sub'>Push some events to see charts.</p>
+      </div>
+    ) : (
+      <>
+        <div class='summary-row'>
+          <div class='chart-card summary-card'>
+            <div class='chart-top'>
+              <div>
+                <h3 class='chart-title'>Activity</h3>
+                <p class='chart-subtitle'>Events per day</p>
+              </div>
+              <div class='chart-stats'>
+                <span class='chart-total'>{totalEvents}</span>
+                <span class='chart-label'>total</span>
+              </div>
+            </div>
+            <div
+              class='chart-container chart-tall'
+              x-init={`renderAreaChart(${JSON.stringify(sortedDays)})`}>
+              <canvas id='chart-activity' />
+            </div>
+          </div>
+
+          <div class='chart-card summary-card'>
+            <div class='chart-top'>
+              <div>
+                <h3 class='chart-title'>Categories</h3>
+                <p class='chart-subtitle'>Event distribution</p>
+              </div>
+              <div class='chart-stats'>
+                <span class='chart-total'>{Object.keys(byCategory).length}</span>
+                <span class='chart-label'>categories</span>
+              </div>
+            </div>
+            <div
+              class='chart-container chart-tall'
+              x-init={`renderDoughnutChart(${JSON.stringify(categoryTotals)})`}>
+              <canvas id='chart-categories' />
+            </div>
+          </div>
+        </div>
+
+        <h2 class='section-title'>Per category</h2>
+
+        <div class='charts-grid'>
+          {Object.entries(byCategory).map(([category, data]) => (
+            <div
+              class='chart-card'
+              x-init={`renderBarChart('${category}', ${JSON.stringify(data)})`}>
+              <div class='chart-top'>
+                <h3 class='chart-title'>{category}</h3>
+                <div class='chart-stats'>
+                  <span class='chart-total'>{categoryTotals[category]}</span>
+                  <span class='chart-label'>events</span>
+                </div>
+              </div>
+              <div class='chart-container'>
+                <canvas id={`chart-${category}`} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
+    )
+  }
+</DashboardLayout>
+
+<script
+  is:inline
+  src='https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js'></script>
+<script is:inline>
+  var chartColors = [
+    '#4338ca',
+    '#059669',
+    '#e84855',
+    '#f59e0b',
+    '#7c3aed',
+    '#0891b2',
+    '#ea580c',
+    '#d946ef',
+    '#2563eb',
+    '#16a34a',
+  ]
+
+  Chart.defaults.plugins.tooltip.backgroundColor = '#111827'
+  Chart.defaults.plugins.tooltip.titleFont = {
+    family: 'Inter',
+    size: 13,
+    weight: '600',
+  }
+  Chart.defaults.plugins.tooltip.bodyFont = { family: 'Inter', size: 12 }
+  Chart.defaults.plugins.tooltip.padding = {
+    top: 8,
+    bottom: 8,
+    left: 12,
+    right: 12,
+  }
+  Chart.defaults.plugins.tooltip.cornerRadius = 8
+  Chart.defaults.plugins.tooltip.displayColors = true
+  Chart.defaults.plugins.tooltip.boxWidth = 8
+  Chart.defaults.plugins.tooltip.boxHeight = 8
+  Chart.defaults.plugins.tooltip.boxPadding = 4
+  Chart.defaults.plugins.tooltip.usePointStyle = true
+
+  function renderAreaChart(data) {
+    var canvas = document.getElementById('chart-activity')
+    if (!canvas) return
+    new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: data.map(function (d) {
+          var date = new Date(d.day + 'T00:00:00')
+          return date.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+          })
+        }),
+        datasets: [
+          {
+            data: data.map(function (d) {
+              return d.count
+            }),
+            borderColor: '#4338ca',
+            backgroundColor: 'rgba(67, 56, 202, 0.08)',
+            borderWidth: 2.5,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHitRadius: 12,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: '#4338ca',
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              labelColor: function () {
+                return {
+                  backgroundColor: '#4338ca',
+                  borderColor: '#4338ca',
+                  borderWidth: 0,
+                  borderRadius: 3,
+                }
+              },
+            },
+          },
+        },
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: {
+              color: '#9ca3af',
+              font: { size: 11, family: 'Inter' },
+              maxTicksLimit: 8,
+            },
+            border: { display: false },
+          },
+          y: {
+            grid: { color: 'rgba(0,0,0,0.04)' },
+            ticks: { color: '#9ca3af', font: { size: 11, family: 'Inter' } },
+            border: { display: false },
+            beginAtZero: true,
+          },
+        },
+      },
+    })
+  }
+
+  function renderDoughnutChart(totals) {
+    var canvas = document.getElementById('chart-categories')
+    if (!canvas) return
+    var labels = Object.keys(totals)
+    var values = Object.values(totals)
+    var doughnutColors = [
+      '#818cf8',
+      '#6ee7b7',
+      '#fca5a5',
+      '#fcd34d',
+      '#c4b5fd',
+      '#67e8f9',
+      '#fdba74',
+      '#f0abfc',
+      '#93c5fd',
+      '#86efac',
+    ]
+    var doughnutHover = [
+      '#6366f1',
+      '#34d399',
+      '#f87171',
+      '#fbbf24',
+      '#a78bfa',
+      '#22d3ee',
+      '#fb923c',
+      '#e879f9',
+      '#60a5fa',
+      '#4ade80',
+    ]
+    var colors = labels.map(function (_, i) {
+      return doughnutColors[i % doughnutColors.length]
+    })
+    var hovers = labels.map(function (_, i) {
+      return doughnutHover[i % doughnutHover.length]
+    })
+
+    new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            data: values,
+            backgroundColor: colors,
+            hoverBackgroundColor: hovers,
+            borderWidth: 2,
+            borderColor: '#ffffff',
+            hoverOffset: 4,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '65%',
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: {
+              padding: 14,
+              usePointStyle: true,
+              pointStyle: 'circle',
+              font: { size: 12, family: 'Inter', weight: '500' },
+              color: '#6b7280',
+            },
+          },
+        },
+      },
+    })
+  }
+
+  function renderBarChart(category, data) {
+    var canvas = document.getElementById('chart-' + category)
+    if (!canvas) return
+
+    var hash = 0
+    for (var i = 0; i < category.length; i++) {
+      hash = category.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    var color = chartColors[Math.abs(hash) % chartColors.length]
+
+    new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: data.map(function (d) {
+          var date = new Date(d.day + 'T00:00:00')
+          return date.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+          })
+        }),
+        datasets: [
+          {
+            label: category,
+            data: data.map(function (d) {
+              return d.count
+            }),
+            backgroundColor: color + '22',
+            hoverBackgroundColor: color + '55',
+            borderRadius: 5,
+            borderSkipped: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              labelColor: function () {
+                return {
+                  backgroundColor: color,
+                  borderColor: color,
+                  borderWidth: 0,
+                  borderRadius: 3,
+                }
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: {
+              color: '#9ca3af',
+              font: { size: 11, family: 'Inter' },
+              maxTicksLimit: 10,
+            },
+            border: { display: false },
+          },
+          y: {
+            display: false,
+            beginAtZero: true,
+          },
+        },
+      },
+    })
+  }
+
+  window.renderAreaChart = renderAreaChart
+  window.renderDoughnutChart = renderDoughnutChart
+  window.renderBarChart = renderBarChart
+</script>
+
+<style>
+  .charts-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .charts-header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--color-text);
+    letter-spacing: -0.03em;
+  }
+  .charts-badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 3px 10px;
+    border-radius: var(--radius-pill);
+  }
+
+  .summary-row {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--color-text);
+    margin-bottom: 16px;
+    letter-spacing: -0.02em;
+  }
+
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+
+  .chart-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: 24px;
+  }
+
+  .chart-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .chart-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .chart-subtitle {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    margin-top: 2px;
+  }
+
+  .chart-stats {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+  }
+  .chart-total {
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--color-text);
+    letter-spacing: -0.02em;
+  }
+  .chart-label {
+    color: var(--color-text-secondary);
+    font-size: 13px;
+  }
+
+  .chart-container {
+    position: relative;
+    height: 150px;
+  }
+
+  .chart-tall {
+    height: 200px;
+  }
+
+  .empty-charts {
+    text-align: center;
+    padding: 80px 20px;
+    background: var(--color-surface);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+  }
+  .empty-main {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--color-text);
+    margin-bottom: 6px;
+  }
+  .empty-sub {
+    color: var(--color-text-secondary);
+    font-size: 14px;
+  }
+
+  @media (max-width: 768px) {
+    .summary-row {
+      grid-template-columns: 1fr;
+    }
+    .charts-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

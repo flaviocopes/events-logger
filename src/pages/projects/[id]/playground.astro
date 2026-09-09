@@ -1,0 +1,626 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro'
+import { db } from '@/db'
+import { projects, categories } from '@/db/schema'
+import { eq } from 'drizzle-orm'
+import { getGlobalApiKey } from '@/lib/auth'
+
+const { id } = Astro.params
+const project = db.select().from(projects).where(eq(projects.id, id!)).get()
+if (!project) return Astro.redirect('/')
+
+const apiKey = getGlobalApiKey()
+
+const projectCategories = db
+  .select({ name: categories.name })
+  .from(categories)
+  .where(eq(categories.projectId, id!))
+  .all()
+---
+
+<DashboardLayout projectId={id!} currentPage='playground'>
+  <div
+    class='playground'
+    x-data={`{
+    mode: 'event',
+    category: '${projectCategories[0]?.name || 'test'}',
+    eventTitle: '',
+    userId: '',
+    description: '',
+    icon: '',
+    tagsKey: '',
+    tagsVal: '',
+    tags: [],
+    eventUrl: '',
+    notify: false,
+    insightTitle: '',
+    insightValue: '',
+    insightIcon: '',
+    sending: false,
+    result: null,
+    addTag() {
+      if (this.tagsKey && this.tagsVal) {
+        this.tags.push({ key: this.tagsKey, val: this.tagsVal });
+        this.tagsKey = '';
+        this.tagsVal = '';
+      }
+    },
+    removeTag(i) { this.tags.splice(i, 1) },
+    get tagsObj() {
+      const obj = {};
+      this.tags.forEach(t => obj[t.key] = t.val);
+      return obj;
+    },
+    get fetchCode() {
+      if (this.mode === 'insight') return this.insightFetchCode;
+      const fields = [];
+      fields.push('    project: ${JSON.stringify(id)}');
+      fields.push('    category: ' + JSON.stringify(this.category));
+      fields.push('    title: ' + JSON.stringify(this.eventTitle || 'My Event'));
+      if (this.description) fields.push('    description: ' + JSON.stringify(this.description));
+      if (this.icon) fields.push('    icon: ' + JSON.stringify(this.icon));
+      if (this.userId) fields.push('    user_id: ' + JSON.stringify(this.userId));
+      if (this.eventUrl) fields.push('    url: ' + JSON.stringify(this.eventUrl));
+      if (this.tags.length) fields.push('    tags: ' + JSON.stringify(this.tagsObj));
+      if (this.notify) fields.push('    notify: true');
+      const body = fields.join(',\\n');
+      return 'await fetch("http://localhost:4321/api/events", {\\n  method: "POST",\\n  headers: {\\n    "Content-Type": "application/json",\\n    "Authorization": "Bearer ${apiKey}"\\n  },\\n  body: JSON.stringify({\\n' + body + '\\n  })\\n});';
+    },
+    get insightFetchCode() {
+      const fields = [];
+      fields.push('    project: ${JSON.stringify(id)}');
+      fields.push('    title: ' + JSON.stringify(this.insightTitle || 'My Insight'));
+      fields.push('    value: ' + JSON.stringify(this.insightValue || '0'));
+      if (this.insightIcon) fields.push('    icon: ' + JSON.stringify(this.insightIcon));
+      const body = fields.join(',\\n');
+      return 'await fetch("http://localhost:4321/api/insight", {\\n  method: "POST",\\n  headers: {\\n    "Content-Type": "application/json",\\n    "Authorization": "Bearer ${apiKey}"\\n  },\\n  body: JSON.stringify({\\n' + body + '\\n  })\\n});';
+    },
+    get canSend() {
+      if (this.mode === 'event') return !!this.eventTitle;
+      return !!this.insightTitle && this.insightValue !== '';
+    },
+    async send() {
+      if (this.mode === 'insight') return this.sendInsight();
+      return this.sendEvent();
+    },
+    async sendEvent() {
+      if (!this.eventTitle) return;
+      this.sending = true;
+      this.result = null;
+      try {
+        const body = { project: '${id}', category: this.category, title: this.eventTitle };
+        if (this.description) body.description = this.description;
+        if (this.icon) body.icon = this.icon;
+        if (this.eventUrl) body.url = this.eventUrl;
+        if (this.userId) body.user_id = this.userId;
+        if (this.tags.length) body.tags = this.tagsObj;
+        if (this.notify) body.notify = true;
+        const res = await fetch('/api/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${apiKey}' },
+          body: JSON.stringify(body)
+        });
+        if (res.ok) {
+          this.result = { ok: true, msg: 'Event sent!' };
+          if (window.__notifyPoll) setTimeout(window.__notifyPoll, 500);
+        } else {
+          const err = await res.json();
+          this.result = { ok: false, msg: err.error || 'Failed' };
+        }
+      } catch(e) {
+        this.result = { ok: false, msg: 'Connection failed' };
+      }
+      this.sending = false;
+      setTimeout(() => this.result = null, 3000);
+    },
+    async sendInsight() {
+      if (!this.insightTitle || this.insightValue === '') return;
+      this.sending = true;
+      this.result = null;
+      try {
+        const body = { project: '${id}', title: this.insightTitle, value: this.insightValue };
+        if (this.insightIcon) body.icon = this.insightIcon;
+        const res = await fetch('/api/insight', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ${apiKey}' },
+          body: JSON.stringify(body)
+        });
+        if (res.ok) {
+          this.result = { ok: true, msg: 'Insight saved!' };
+        } else {
+          const err = await res.json();
+          this.result = { ok: false, msg: err.error || 'Failed' };
+        }
+      } catch(e) {
+        this.result = { ok: false, msg: 'Connection failed' };
+      }
+      this.sending = false;
+      setTimeout(() => this.result = null, 3000);
+    }
+  }`}>
+    <div class='playground-header'>
+      <h1>Playground</h1>
+      <button
+        class='btn-send'
+        @click='send()'
+        :disabled='!canSend || sending'>
+        <span x-show='!sending' x-text="mode === 'event' ? 'Send Event' : 'Save Insight'"></span>
+        <span x-show='sending' x-cloak>Sending...</span>
+      </button>
+    </div>
+
+    <div class='mode-tabs'>
+      <button
+        class='mode-tab'
+        :class="{ active: mode === 'event' }"
+        @click="mode = 'event'">
+        <svg width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
+          <polyline points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polyline>
+        </svg>
+        Event
+      </button>
+      <button
+        class='mode-tab'
+        :class="{ active: mode === 'insight' }"
+        @click="mode = 'insight'">
+        <svg width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
+          <path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'></path>
+        </svg>
+        Insight
+      </button>
+    </div>
+
+    <div
+      x-show='result'
+      x-cloak
+      class='toast'
+      :class="result?.ok ? 'toast-ok' : 'toast-err'"
+      x-transition>
+      <span x-show='result?.ok' class='toast-check'>&#10003;</span>
+      <span x-text='result?.msg'></span>
+    </div>
+
+    <div class='playground-body'>
+      <div class='playground-form'>
+        <template x-if="mode === 'event'">
+          <div class='form-fields'>
+            <div class='field'>
+              <label>Category</label>
+              <input type='text' x-model='category' placeholder='test' />
+            </div>
+
+            <div class='field'>
+              <label>Event</label>
+              <input
+                type='text'
+                x-model='eventTitle'
+                placeholder='Successful Payment'
+              />
+            </div>
+
+            <div class='field'>
+              <label>User ID <span class='optional'>(optional)</span></label>
+              <input type='text' x-model='userId' placeholder='user-123' />
+            </div>
+
+            <div class='field'>
+              <label>Description <span class='optional'>(optional)</span></label>
+              <textarea
+                x-model='description'
+                placeholder='2x 1TB SSD - Overnight Shipping'
+                rows='2'></textarea>
+            </div>
+
+            <div class='field'>
+              <label>URL <span class='optional'>(optional)</span></label>
+              <input
+                type='url'
+                x-model='eventUrl'
+                placeholder='https://app.example.com/orders/12345'
+              />
+            </div>
+
+            <div class='field'>
+              <label>Tags <span class='optional'>(optional)</span></label>
+              <div class='tags-input'>
+                <template x-for='(tag, i) in tags' :key='i'>
+                  <div class='tag-pill'>
+                    <span x-text='`${tag.key}: ${tag.val}`'></span>
+                    <button type='button' @click='removeTag(i)' class='tag-remove'
+                      >&times;</button
+                    >
+                  </div>
+                </template>
+                <div class='tag-row'>
+                  <input
+                    type='text'
+                    x-model='tagsKey'
+                    placeholder='key'
+                    @keydown.enter.prevent='addTag()'
+                  />
+                  <input
+                    type='text'
+                    x-model='tagsVal'
+                    placeholder='value'
+                    @keydown.enter.prevent='addTag()'
+                  />
+                  <button type='button' class='tag-add' @click='addTag()'>+</button>
+                </div>
+              </div>
+            </div>
+
+            <div class='field field-row'>
+              <label>Notify <span class='optional'>(optional)</span></label>
+              <button
+                type='button'
+                class='toggle'
+                :class='{ on: notify }'
+                @click='notify = !notify'>
+                <span class='toggle-knob'></span>
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="mode === 'insight'">
+          <div class='form-fields'>
+            <div class='field'>
+              <label>Title</label>
+              <input
+                type='text'
+                x-model='insightTitle'
+                placeholder='Monthly Revenue'
+              />
+            </div>
+
+            <div class='field'>
+              <label>Value</label>
+              <input
+                type='text'
+                x-model='insightValue'
+                placeholder='$12,340'
+              />
+            </div>
+
+            <div class='field'>
+              <label>Icon <span class='optional'>(optional)</span></label>
+              <input
+                type='text'
+                x-model='insightIcon'
+                placeholder='💰'
+              />
+            </div>
+
+            <p class='insight-hint'>
+              Insights are upserted by title — sending the same title again updates its value.
+            </p>
+          </div>
+        </template>
+      </div>
+
+      <div class='playground-code'>
+        <div class='code-header'>index.js</div>
+        <pre class='code-block'><code x-html="highlightJS(fetchCode)" /></pre>
+      </div>
+    </div>
+  </div>
+</DashboardLayout>
+
+<script is:inline>
+  function highlightJS(code) {
+    var e = code.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    var strings = []
+    e = e.replace(/"(?:[^"\\]|\\.)*"/g, function (m) {
+      strings.push(m)
+      return '\u00a7' + (strings.length - 1) + '\u00a7'
+    })
+    e = e.replace(
+      /\b(await|true|false|null)\b/g,
+      '<span class="hl-kw">$1</span>'
+    )
+    e = e.replace(/\b(fetch|JSON)\b/g, '<span class="hl-fn">$1</span>')
+    e = e.replace(/\.(\w+)\(/g, '.<span class="hl-fn">$1</span>(')
+    e = e.replace(/(\w+):/g, '<span class="hl-prop">$1</span>:')
+    e = e.replace(/\u00a7(\d+)\u00a7/g, function (_, i) {
+      return '<span class="hl-str">' + strings[parseInt(i)] + '</span>'
+    })
+    return e
+  }
+</script>
+
+<style>
+  .playground-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+  }
+  .playground-header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--color-text);
+    letter-spacing: -0.03em;
+  }
+
+  .mode-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 24px;
+    background: var(--color-bg);
+    border-radius: var(--radius-md);
+    padding: 3px;
+    width: fit-content;
+  }
+  .mode-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border: none;
+    background: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    transition: all 0.15s;
+  }
+  .mode-tab:hover {
+    color: var(--color-text);
+  }
+  .mode-tab.active {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  }
+
+  .form-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .insight-hint {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    line-height: 1.5;
+    padding: 10px 14px;
+    background: var(--color-bg);
+    border-radius: var(--radius-md);
+  }
+
+  .btn-send {
+    padding: 10px 24px;
+    background: var(--color-primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-pill);
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .btn-send:hover {
+    background: var(--color-primary-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(67, 56, 202, 0.25);
+  }
+  .btn-send:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 24px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    z-index: 200;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+  }
+  .toast-ok .toast-check {
+    color: var(--color-success);
+    font-weight: 700;
+    font-size: 16px;
+  }
+  .toast-err {
+    border-color: #fca5a5;
+    color: var(--color-danger);
+  }
+
+  .playground-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  .playground-form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-text);
+    margin-bottom: 6px;
+  }
+  .optional {
+    font-weight: 400;
+    color: var(--color-text-muted);
+    font-size: 13px;
+  }
+
+  .field input,
+  .field textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    outline: none;
+    background: var(--color-surface);
+    transition: all 0.15s;
+  }
+  .field input:focus,
+  .field textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(67, 56, 202, 0.1);
+  }
+  .field input::placeholder,
+  .field textarea::placeholder {
+    color: var(--color-text-muted);
+  }
+  .field textarea {
+    resize: vertical;
+  }
+
+  .field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .field-row label {
+    margin-bottom: 0;
+  }
+
+  .toggle {
+    width: 44px;
+    height: 24px;
+    border-radius: 12px;
+    border: none;
+    background: var(--color-border);
+    position: relative;
+    transition: background 0.2s;
+    padding: 0;
+  }
+  .toggle.on {
+    background: var(--color-primary);
+  }
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  }
+  .toggle.on .toggle-knob {
+    transform: translateX(20px);
+  }
+
+  .tags-input {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .tag-remove {
+    background: none;
+    border: none;
+    color: var(--color-primary);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    opacity: 0.6;
+  }
+  .tag-remove:hover {
+    opacity: 1;
+  }
+  .tag-row {
+    display: flex;
+    gap: 6px;
+  }
+  .tag-row input {
+    flex: 1;
+  }
+  .tag-add {
+    width: 40px;
+    height: 40px;
+    background: var(--color-bg);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: 18px;
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .tag-add:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+
+  .playground-code {
+    background: #1e1b2e;
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  }
+  .code-header {
+    padding: 12px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #8b85a0;
+    border-bottom: 1px solid #2e2a40;
+  }
+  .code-block {
+    padding: 18px;
+    color: #abb2bf;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    line-height: 1.65;
+    overflow: auto;
+    flex: 1;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .code-block :global(.hl-kw) {
+    color: #c678dd;
+  }
+  .code-block :global(.hl-str) {
+    color: #98c379;
+  }
+  .code-block :global(.hl-fn) {
+    color: #61afef;
+  }
+  .code-block :global(.hl-prop) {
+    color: #e06c75;
+  }
+
+  @media (max-width: 768px) {
+    .playground-body {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

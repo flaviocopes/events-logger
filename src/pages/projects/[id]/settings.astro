@@ -1,0 +1,316 @@
+---
+import DashboardLayout from '@/layouts/DashboardLayout.astro'
+import { db } from '@/db'
+import { projects, events, categories, insights } from '@/db/schema'
+import { eq, sql } from 'drizzle-orm'
+
+const { id } = Astro.params
+const project = db.select().from(projects).where(eq(projects.id, id!)).get()
+
+if (!project) return Astro.redirect('/')
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData()
+  const action = formData.get('action')
+
+  if (action === 'rename') {
+    const name = formData.get('name')?.toString().trim()
+    if (name) {
+      db.update(projects).set({ name }).where(eq(projects.id, id!)).run()
+      return Astro.redirect(`/projects/${id}/settings`)
+    }
+  }
+
+  if (action === 'delete') {
+    db.delete(events).where(eq(events.projectId, id!)).run()
+    db.delete(insights).where(eq(insights.projectId, id!)).run()
+    db.delete(categories).where(eq(categories.projectId, id!)).run()
+    db.delete(projects).where(eq(projects.id, id!)).run()
+    return Astro.redirect('/')
+  }
+}
+
+const eventCount = db
+  .select({ count: sql<number>`count(*)` })
+  .from(events)
+  .where(eq(events.projectId, id!))
+  .get()
+---
+
+<DashboardLayout projectId={id!} currentPage='settings'>
+  <h1>Settings</h1>
+
+  <div class='settings-card'>
+    <h3>Project Info</h3>
+    <dl class='info-grid'>
+      <dt>Name</dt>
+      <dd
+        x-data={`{ renameOpen: false, name: ${JSON.stringify(project.name)} }`}>
+        <span class='name-display'>
+          <span x-text='name'>{project.name}</span>
+          <button
+            type='button'
+            class='btn-edit'
+            @click='renameOpen = true; $nextTick(() => { $refs.nameInput.focus(); $refs.nameInput.select() })'
+            title='Rename'>
+            <svg
+              width='13'
+              height='13'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='currentColor'
+              stroke-width='2'
+              stroke-linecap='round'
+              stroke-linejoin='round'>
+              <path
+                d='M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7'
+              ></path>
+              <path d='M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z'
+              ></path>
+            </svg>
+          </button>
+        </span>
+
+        <div
+          class='modal-overlay'
+          x-show='renameOpen'
+          x-cloak
+          @click.self='renameOpen = false'
+          @keydown.escape.window='renameOpen = false'>
+          <div class='modal-card' @click.stop>
+            <h3>Rename project</h3>
+            <form method='POST'>
+              <input type='hidden' name='action' value='rename' />
+              <label for='rename-input'>Project name</label>
+              <input
+                id='rename-input'
+                type='text'
+                name='name'
+                x-model='name'
+                x-ref='nameInput'
+                required
+              />
+              <div class='modal-actions'>
+                <button
+                  type='button'
+                  class='btn-cancel'
+                  @click='renameOpen = false'>Cancel</button
+                >
+                <button type='submit' class='btn-save'>Save</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </dd>
+      <dt>ID</dt>
+      <dd><code>{project.id}</code></dd>
+      <dt>Events</dt>
+      <dd>{eventCount?.count ?? 0}</dd>
+      <dt>Created</dt>
+      <dd>
+        {
+          project.createdAt.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          })
+        }
+      </dd>
+    </dl>
+  </div>
+
+  <div class='settings-card danger-card'>
+    <h3>Danger zone</h3>
+    <p class='hint'>
+      This will permanently delete this project and all its events, categories,
+      and insights.
+    </p>
+    <form
+      method='POST'
+      onsubmit="return confirm('Are you sure? This cannot be undone.')">
+      <input type='hidden' name='action' value='delete' />
+      <button type='submit' class='btn-danger'>Delete Project</button>
+    </form>
+  </div>
+</DashboardLayout>
+
+<style>
+  h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--color-text);
+    letter-spacing: -0.03em;
+    margin-bottom: 28px;
+  }
+
+  .settings-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+
+  .settings-card h3 {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--color-text);
+    margin-bottom: 4px;
+  }
+
+  .hint {
+    font-size: 14px;
+    color: var(--color-text-secondary);
+    margin-bottom: 14px;
+  }
+
+  .name-display {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: none;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    transition: all 0.15s;
+    opacity: 0.5;
+  }
+  .btn-edit:hover {
+    opacity: 1;
+    color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+
+  [x-cloak] {
+    display: none !important;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal-card {
+    background: var(--color-surface);
+    border-radius: var(--radius-xl);
+    padding: 28px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  }
+  .modal-card h3 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--color-text);
+    margin-bottom: 16px;
+  }
+  .modal-card label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin-bottom: 6px;
+  }
+  .modal-card input[type='text'] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    outline: none;
+    background: var(--color-surface);
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+  }
+  .modal-card input[type='text']:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(67, 56, 202, 0.1);
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
+  .btn-save {
+    padding: 8px 20px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--color-primary);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .btn-save:hover {
+    background: var(--color-primary-hover);
+  }
+  .btn-cancel {
+    padding: 8px 20px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .btn-cancel:hover {
+    border-color: var(--color-border-hover);
+    color: var(--color-text);
+  }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 10px 16px;
+    font-size: 15px;
+  }
+  .info-grid dt {
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+  .info-grid dd {
+    color: var(--color-text);
+  }
+  .info-grid code {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  .danger-card {
+    border-color: #fecaca;
+    background: var(--color-danger-light);
+  }
+  .danger-card h3 {
+    color: var(--color-danger);
+  }
+
+  .btn-danger {
+    padding: 10px 22px;
+    background: var(--color-surface);
+    border: 2px solid #fca5a5;
+    border-radius: var(--radius-md);
+    color: var(--color-danger);
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .btn-danger:hover {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #fff;
+  }
+</style>

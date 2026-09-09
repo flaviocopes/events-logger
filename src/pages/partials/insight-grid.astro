@@ -1,0 +1,68 @@
+---
+import InsightCard from '@/components/InsightCard.astro'
+import { db } from '@/db'
+import { insights } from '@/db/schema'
+import { eq, desc } from 'drizzle-orm'
+
+const projectId = Astro.url.searchParams.get('project')!
+
+const projectInsights = db
+  .select()
+  .from(insights)
+  .where(eq(insights.projectId, projectId))
+  .orderBy(desc(insights.updatedAt))
+  .all()
+---
+
+{
+  projectInsights.length > 0 && (
+    <div class='insight-count-row'>
+      <span class='insight-count'>{projectInsights.length} metric{projectInsights.length !== 1 ? 's' : ''}</span>
+    </div>
+  )
+}
+
+{
+  projectInsights.length === 0 ? (
+    <div class='empty-insight'>
+      <p>No insights yet</p>
+    </div>
+  ) : (
+    <div class='insight-grid'>
+      {projectInsights.map(insight => (
+        <InsightCard insight={insight} projectId={projectId} />
+      ))}
+    </div>
+  )
+}
+
+<style>
+  .insight-count-row {
+    margin-bottom: 16px;
+  }
+  .insight-count {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 3px 10px;
+    border-radius: var(--radius-pill);
+  }
+  .insight-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+  .empty-insight {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--color-text-muted);
+    font-size: 14px;
+  }
+  @media (max-width: 640px) {
+    .insight-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

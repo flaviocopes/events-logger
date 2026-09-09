@@ -1,0 +1,27 @@
+{
+  "name": "events-logger",
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push"
+  },
+  "bin": {
+    "events-cli": "./cli/index.js"
+  },
+  "dependencies": {
+    "@astrojs/node": "^9",
+    "astro": "^5",
+    "better-sqlite3": "^11.10.0",
+    "commander": "^13",
+    "drizzle-orm": "^0.38"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7",
+    "drizzle-kit": "^0.30"
+  }
+}

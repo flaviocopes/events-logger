@@ -1,0 +1,490 @@
+---
+import Layout from './Layout.astro'
+import { db } from '@/db'
+import { projects } from '@/db/schema'
+
+interface Props {
+  projectId: string
+  currentPage: 'feed' | 'charts' | 'insight' | 'playground' | 'settings'
+}
+
+const { projectId, currentPage } = Astro.props
+
+const allProjects = db.select().from(projects).all()
+const project = allProjects.find(p => p.id === projectId)
+
+const avatarColors = [
+  '#e84855',
+  '#f9c22e',
+  '#3185fc',
+  '#46c46f',
+  '#9b5de5',
+  '#f15bb5',
+  '#00bbf9',
+  '#ff6b35',
+  '#2ec4b6',
+  '#ff9f1c',
+  '#7678ed',
+  '#e07a5f',
+]
+
+function getColor(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return avatarColors[Math.abs(hash) % avatarColors.length]
+}
+
+const navItems = [
+  { page: 'feed', label: 'Feed', icon: 'feed' },
+  { page: 'charts', label: 'Charts', icon: 'charts' },
+  { page: 'insight', label: 'Insights', icon: 'insight' },
+  { page: 'playground', label: 'Playground', icon: 'playground' },
+] as const
+
+const projectColor = project ? getColor(project.name) : '#9ca3af'
+---
+
+<Layout title={project?.name ?? 'Dashboard'}>
+  <div class='app' x-data='{ menuOpen: false }'>
+    <header class='top-bar'>
+      <div class='top-bar-inner'>
+        <div class='top-bar-left'>
+          <a href='/' class='home-link' title='All projects'>
+            <svg
+              width='20'
+              height='20'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='currentColor'
+              stroke-width='2'
+              stroke-linecap='round'
+              stroke-linejoin='round'>
+              <path d='M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'></path>
+              <polyline points='9 22 9 12 15 12 15 22'></polyline>
+            </svg>
+          </a>
+          <span class='breadcrumb-sep'>/</span>
+          <div class='project-badge'>
+            <span class='project-dot' style={`background: ${projectColor}`}
+            ></span>
+            <span class='project-name'>{project?.name ?? 'Unknown'}</span>
+          </div>
+        </div>
+
+        <nav class='page-tabs'>
+          {
+            navItems.map(item => (
+              <a
+                href={`/projects/${projectId}/${item.page}`}
+                class:list={[
+                  'tab-item',
+                  { active: currentPage === item.page },
+                ]}>
+                {item.page === 'feed' && (
+                  <svg
+                    class='tab-icon'
+                    width='15'
+                    height='15'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <path d='M4 11a9 9 0 0 1 9 9' />
+                    <path d='M4 4a16 16 0 0 1 16 16' />
+                    <circle cx='5' cy='19' r='1' />
+                  </svg>
+                )}
+                {item.page === 'charts' && (
+                  <svg
+                    class='tab-icon'
+                    width='15'
+                    height='15'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <line x1='18' y1='20' x2='18' y2='10' />
+                    <line x1='12' y1='20' x2='12' y2='4' />
+                    <line x1='6' y1='20' x2='6' y2='14' />
+                  </svg>
+                )}
+                {item.page === 'insight' && (
+                  <svg
+                    class='tab-icon'
+                    width='15'
+                    height='15'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <path d='M12 2a7 7 0 0 0-7 7c0 4 3 5.5 4 8h6c1-2.5 4-4 4-8a7 7 0 0 0-7-7z' />
+                    <line x1='10' y1='21' x2='14' y2='21' />
+                  </svg>
+                )}
+                {item.page === 'playground' && (
+                  <svg
+                    class='tab-icon'
+                    width='15'
+                    height='15'
+                    viewBox='0 0 24 24'
+                    fill='none'
+                    stroke='currentColor'
+                    stroke-width='2'
+                    stroke-linecap='round'
+                    stroke-linejoin='round'>
+                    <polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2' />
+                  </svg>
+                )}
+                {item.label}
+              </a>
+            ))
+          }
+        </nav>
+
+        <div class='top-bar-right'>
+          <a
+            href={`/projects/${projectId}/settings`}
+            class:list={[
+              'settings-btn',
+              { active: currentPage === 'settings' },
+            ]}
+            title='Settings'>
+            <svg
+              width='18'
+              height='18'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='currentColor'
+              stroke-width='1.8'
+              stroke-linecap='round'
+              stroke-linejoin='round'>
+              <circle cx='12' cy='12' r='3'></circle>
+              <path
+                d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z'
+              ></path>
+            </svg>
+          </a>
+
+          <button
+            class='mobile-menu-btn'
+            @click='menuOpen = !menuOpen'
+            aria-label='Toggle menu'>
+            <svg
+              width='20'
+              height='20'
+              viewBox='0 0 24 24'
+              fill='none'
+              stroke='currentColor'
+              stroke-width='2'
+              stroke-linecap='round'
+              stroke-linejoin='round'>
+              <line x1='3' y1='12' x2='21' y2='12'></line>
+              <line x1='3' y1='6' x2='21' y2='6'></line>
+              <line x1='3' y1='18' x2='21' y2='18'></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div
+        class='mobile-nav'
+        x-show='menuOpen'
+        x-transition.opacity
+        @click.outside='menuOpen = false'
+        x-cloak>
+        {
+          navItems.map(item => (
+            <a
+              href={`/projects/${projectId}/${item.page}`}
+              class:list={[
+                'mobile-nav-item',
+                { active: currentPage === item.page },
+              ]}>
+              {item.label}
+            </a>
+          ))
+        }
+        <a
+          href={`/projects/${projectId}/settings`}
+          class:list={[
+            'mobile-nav-item',
+            { active: currentPage === 'settings' },
+          ]}>
+          Settings
+        </a>
+      </div>
+    </header>
+
+    <main class='main-content'>
+      <div class='content-container'>
+        <slot />
+      </div>
+    </main>
+  </div>
+</Layout>
+
+<script is:inline define:vars={{ projectId }}>
+  ;(function () {
+    if (!('Notification' in window)) return
+
+    var lastSeenId = 0
+    var firstPoll = true
+    var apiUrl =
+      '/api/events?project=' + encodeURIComponent(projectId) + '&limit=10'
+
+    function poll() {
+      if (Notification.permission !== 'granted') return
+      fetch(apiUrl)
+        .then(function (r) {
+          return r.json()
+        })
+        .then(function (data) {
+          var evts = data.events || []
+          if (firstPoll) {
+            for (var i = 0; i < evts.length; i++) {
+              if (evts[i].id > lastSeenId) lastSeenId = evts[i].id
+            }
+            firstPoll = false
+            return
+          }
+          for (var i = 0; i < evts.length; i++) {
+            var ev = evts[i]
+            if (ev.id > lastSeenId && ev.notify) {
+              new Notification(ev.title, {
+                body: ev.category,
+                tag: 'ev-' + ev.id,
+              })
+            }
+          }
+          for (var i = 0; i < evts.length; i++) {
+            if (evts[i].id > lastSeenId) lastSeenId = evts[i].id
+          }
+        })
+        .catch(function () {})
+    }
+
+    poll()
+    setInterval(poll, 3000)
+    window.__notifyPoll = poll
+  })()
+</script>
+
+<style>
+  .app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .top-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .top-bar-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .top-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .home-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    transition: all 0.15s;
+  }
+  .home-link:hover {
+    color: var(--color-text);
+    background: var(--color-bg);
+  }
+
+  .breadcrumb-sep {
+    color: var(--color-text-muted);
+    font-size: 18px;
+    font-weight: 300;
+  }
+
+  .project-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .project-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .project-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .page-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: var(--color-bg);
+    padding: 3px;
+    border-radius: var(--radius-pill);
+  }
+
+  .tab-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .tab-item:hover {
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+  .tab-item.active {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+
+  .tab-icon {
+    flex-shrink: 0;
+  }
+
+  .top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    transition: all 0.15s;
+  }
+  .settings-btn:hover {
+    color: var(--color-text);
+    background: var(--color-bg);
+  }
+  .settings-btn.active {
+    color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+
+  .mobile-menu-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .mobile-nav {
+    display: none;
+    flex-direction: column;
+    padding: 8px 16px 16px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+
+  .mobile-nav-item {
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    transition: all 0.15s;
+  }
+  .mobile-nav-item:hover {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .mobile-nav-item.active {
+    color: var(--color-primary);
+    font-weight: 600;
+    background: var(--color-primary-light);
+  }
+
+  .main-content {
+    flex: 1;
+    padding: 32px 24px 48px;
+  }
+
+  .content-container {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 768px) {
+    .page-tabs {
+      display: none;
+    }
+
+    .settings-btn {
+      display: none;
+    }
+
+    .mobile-menu-btn {
+      display: flex;
+    }
+
+    .mobile-nav {
+      display: flex;
+    }
+
+    .top-bar-inner {
+      height: 50px;
+      padding: 0 16px;
+    }
+
+    .main-content {
+      padding: 24px 16px 32px;
+    }
+  }
+</style>

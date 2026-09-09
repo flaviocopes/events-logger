@@ -1,0 +1,171 @@
+---
+interface Props {
+  insight: {
+    id: number
+    title: string
+    value: string
+    icon: string | null
+    updatedAt: Date
+  }
+  projectId: string
+}
+
+const { insight, projectId } = Astro.props
+
+const accentColors = [
+  '#4338ca',
+  '#059669',
+  '#e84855',
+  '#f59e0b',
+  '#7c3aed',
+  '#0891b2',
+  '#ea580c',
+  '#2563eb',
+]
+
+function getAccent(title: string): string {
+  let hash = 0
+  for (let i = 0; i < title.length; i++) {
+    hash = title.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return accentColors[Math.abs(hash) % accentColors.length]
+}
+
+function timeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return date.toLocaleDateString()
+}
+
+const accent = getAccent(insight.title)
+const updatedLabel = timeAgo(insight.updatedAt)
+---
+
+<div class='insight-card' id={`insight-${insight.id}`}>
+  <div class='accent-bar' style={`background: ${accent}`}></div>
+  <button
+    class='insight-delete'
+    hx-post={`/api/insight/${insight.id}/delete?project=${projectId}`}
+    hx-target='#insight-grid'
+    hx-swap='innerHTML'
+    hx-confirm='Remove this metric?'
+    title='Remove metric'>
+    <svg
+      xmlns='http://www.w3.org/2000/svg'
+      width='14'
+      height='14'
+      viewBox='0 0 24 24'
+      fill='none'
+      stroke='currentColor'
+      stroke-width='2'
+      stroke-linecap='round'
+      stroke-linejoin='round'
+      ><line x1='18' y1='6' x2='6' y2='18'></line><line
+        x1='6'
+        y1='6'
+        x2='18'
+        y2='18'></line></svg
+    >
+  </button>
+  <div class='insight-icon-wrap' style={`background: ${accent}14`}>
+    <span class='insight-icon'>{insight.icon || '📈'}</span>
+  </div>
+  <div class='insight-value'>{insight.value}</div>
+  <div class='insight-title'>{insight.title}</div>
+  <div class='insight-updated'>Updated {updatedLabel}</div>
+</div>
+
+<style>
+  .insight-card {
+    background: var(--color-surface);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+    padding: 24px 24px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.2s;
+  }
+  .insight-card:hover {
+    border-color: var(--color-border-hover);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    transform: translateY(-2px);
+  }
+
+  .accent-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+  }
+
+  .insight-delete {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm, 6px);
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: all 0.15s;
+  }
+  .insight-card:hover .insight-delete {
+    opacity: 1;
+  }
+  .insight-delete:hover {
+    background: #fee2e2;
+    color: #dc2626;
+  }
+
+  .insight-icon-wrap {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+  }
+
+  .insight-icon {
+    font-size: 22px;
+  }
+
+  .insight-value {
+    font-size: 32px;
+    font-weight: 900;
+    color: var(--color-text);
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+  }
+
+  .insight-title {
+    font-size: 14px;
+    color: var(--color-text-secondary);
+    margin-top: 4px;
+    font-weight: 500;
+  }
+
+  .insight-updated {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    margin-top: 8px;
+    font-weight: 400;
+  }
+</style>

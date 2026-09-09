@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.astro/
+
+# SQLite database created at startup (see drizzle.config.ts and src/db/index.ts)
+data/events.db
+data/events.db-shm
+data/events.db-wal
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store

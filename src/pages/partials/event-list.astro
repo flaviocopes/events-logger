@@ -1,0 +1,68 @@
+---
+import EventCard from '@/components/EventCard.astro'
+import { db } from '@/db'
+import { events } from '@/db/schema'
+import { eq, desc, and, like, or } from 'drizzle-orm'
+
+const projectId = Astro.url.searchParams.get('project')!
+const category = Astro.url.searchParams.get('category')
+const search = Astro.url.searchParams.get('search')
+const showFavorites = Astro.url.searchParams.get('favorites') === '1'
+const pageParam = parseInt(Astro.url.searchParams.get('page') || '1')
+const perParam = Astro.url.searchParams.get('per') || '50'
+const perPage =
+  perParam === 'all' ? null : Math.min(parseInt(perParam) || 50, 100)
+const page = Math.max(1, pageParam)
+
+const conditions = [eq(events.projectId, projectId)]
+if (category) conditions.push(eq(events.category, category))
+if (showFavorites) conditions.push(eq(events.favorited, true))
+if (search) {
+  conditions.push(
+    or(
+      like(events.title, `%${search}%`),
+      like(events.description, `%${search}%`),
+      like(events.tags, `%${search}%`)
+    )!
+  )
+}
+
+let query = db
+  .select()
+  .from(events)
+  .where(and(...conditions))
+  .orderBy(desc(events.createdAt))
+
+if (perPage) {
+  query = query.limit(perPage).offset((page - 1) * perPage) as typeof query
+}
+
+const results = query.all()
+---
+
+{
+  results.length === 0 ? (
+    <div class='empty-feed'>
+      <p>{search ? `No events matching "${search}"` : 'No events yet'}</p>
+    </div>
+  ) : (
+    <div class='event-list'>
+      {results.map(event => (
+        <EventCard event={event} />
+      ))}
+    </div>
+  )
+}
+
+<style>
+  .event-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .empty-feed {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--color-text-muted);
+    font-size: 14px;
+  }
+</style>
